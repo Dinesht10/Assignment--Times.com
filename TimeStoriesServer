@@ -1,0 +1,135 @@
+package Two;
+
+import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpExchange;
+
+import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
+
+public class TimeStoriesServer {
+
+   public static void main(String[] args) {
+        try {
+          HttpServer server = HttpServer.create(new java.net.InetSocketAddress(8000), 0);
+           server.createContext("/getTimeStories", new TimeStoriesHandler());
+           server.setExecutor(null); // creates a default executor
+        server.start();
+            System.out.println("Server started on port 8000");
+        } catch (IOException e) {
+            e.printStackTrace();
+            System.out.println("Failed to start server: " + e.getMessage());
+        }
+    }
+
+    static class TimeStoriesHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("GET".equals(exchange.getRequestMethod())) {
+                try {
+                  List<Story> stories = getLatestStories();
+                    String jsonResponse = createJsonResponse(stories);
+
+                    // Debugging: Print JSON response
+                    System.out.println("JSON Response: " + jsonResponse);
+
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                     exchange.sendResponseHeaders(200, jsonResponse.getBytes().length);
+                    OutputStream os = exchange.getResponseBody();
+                    os.write(jsonResponse.getBytes());
+                    os.close();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    exchange.sendResponseHeaders(500, -1); // Internal Server Error
+                }
+            } else {
+                exchange.sendResponseHeaders(405, -1); // Method Not Allowed
+            }
+        }
+
+        private List<Story> getLatestStories() throws IOException {
+            List<Story> stories = new ArrayList<>();
+            String urlString = "https://time.com/";
+            try {
+                URL url = new URL(urlString);
+                 HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                connection.setRequestMethod("GET");
+                 connection.setRequestProperty("User-Agent", "Mozilla/5.0");
+
+                BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
+                StringBuilder htmlContent = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    htmlContent.append(line);
+                }
+                reader.close();
+
+                // Debugging: Print HTML content
+                System.out.println("HTML Content: " + htmlContent.toString());
+
+                // Parse HTML content to extract story data
+                String html = htmlContent.toString();
+                int startIndex = html.indexOf("<section class=\"latest-stories\"");
+                if (startIndex == -1) return stories;
+
+                html = html.substring(startIndex);
+                int endIndex = html.indexOf("</section>");
+                if (endIndex == -1) return stories;
+                String storiesSection = html.substring(0, endIndex);
+
+                int count = 0;
+                while (count < 6) {
+                    int linkStart = storiesSection.indexOf("<a href=\"");
+                    if (linkStart == -1) break;
+
+                    int linkEnd = storiesSection.indexOf("\"", linkStart + 9);
+                    if (linkEnd == -1) break;
+                    String link = storiesSection.substring(linkStart + 9, linkEnd);
+
+                    int titleStart = storiesSection.indexOf(">", linkEnd) + 1;
+                    int titleEnd = storiesSection.indexOf("</a>", titleStart);
+                    if (titleStart == -1 || titleEnd == -1) break;
+                    String title = storiesSection.substring(titleStart, titleEnd).trim();
+
+                    stories.add(new Story(title, link));
+
+                    count++;
+                    storiesSection = storiesSection.substring(titleEnd);
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+                throw new IOException("Failed to fetch or parse stories: " + e.getMessage());
+            }
+            return stories;
+        }
+
+        private String createJsonResponse(List<Story> stories) {
+            StringBuilder json = new StringBuilder("[");
+            for (int i = 0; i < stories.size(); i++) {
+                Story story = stories.get(i);
+                json.append("{")
+                    .append("\"title\":\"").append(story.title).append("\",")
+                    .append("\"link\":\"").append(story.link).append("\"")
+                    .append("}");
+                if (i < stories.size() - 1) {
+                    json.append(",");
+                }
+            }
+            json.append("]");
+            return json.toString();
+        }
+    }
+
+    static class Story {
+        String title;
+        String link;
+
+        Story(String title, String link) {
+            this.title = title;
+            this.link = link;
+        }
+    }
+}
